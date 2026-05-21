@@ -1,33 +1,41 @@
-FROM composer:2 AS composer
-WORKDIR /var/www
+FROM php:8.2-cli
 
-COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader --classmap-authoritative
-
-FROM node:20-bullseye AS node
-WORKDIR /var/www
-
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY . .
-RUN npm run build
-
-FROM php:8.2-fpm
-
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git curl unzip libzip-dev zip libicu-dev zlib1g-dev libonig-dev libxml2-dev \
-    && docker-php-ext-install pdo pdo_mysql mbstring zip bcmath intl xml \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    git \
+    curl \
+    zip \
+    unzip \
+    libicu-dev \
+    libzip-dev \
+    nodejs \
+    npm
 
-COPY --from=composer /var/www/vendor /var/www/vendor
-COPY --from=composer /var/www/composer.lock /var/www/composer.lock
-COPY --from=node /var/www/public/build /var/www/public/build
+# Install PHP extensions
+RUN docker-php-ext-install intl pdo pdo_mysql zip
 
-WORKDIR /var/www
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+WORKDIR /app
+
+# Copy composer files
+COPY composer.json composer.lock ./
+
+# Install PHP dependencies
+RUN composer install --no-dev --optimize-autoloader
+
+# Copy project
 COPY . .
 
-RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
+# Install frontend dependencies
+RUN npm install && npm run build
 
-EXPOSE 9000
-CMD ["php-fpm"]
+# Laravel optimizations
+RUN php artisan config:cache
+RUN php artisan route:cache
+RUN php artisan view:cache
+
+EXPOSE 10000
+
+CMD php artisan serve --host=0.0.0.0 --port=10000
