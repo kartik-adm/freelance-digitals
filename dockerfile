@@ -1,6 +1,7 @@
+# PHP
 FROM php:8.2-cli
 
-# Install dependencies
+# Install system packages
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -8,8 +9,11 @@ RUN apt-get update && apt-get install -y \
     unzip \
     libicu-dev \
     libzip-dev \
-    nodejs \
-    npm
+    gnupg
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs
 
 # Install PHP extensions
 RUN docker-php-ext-install intl pdo pdo_mysql zip
@@ -17,19 +21,21 @@ RUN docker-php-ext-install intl pdo pdo_mysql zip
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Set working directory
 WORKDIR /app
 
-# Copy ALL project files first
+# Copy project
 COPY . .
 
-# Install PHP dependencies
+# Install PHP packages
 RUN composer install --no-dev --optimize-autoloader
 
-# Install frontend dependencies
-RUN npm install && npm run build
+# Install frontend packages
+RUN npm install
 
-# Laravel cache
+# Build Vite
+RUN npm run build
+
+# Cache Laravel
 RUN php artisan config:cache || true
 RUN php artisan route:cache || true
 RUN php artisan view:cache || true
