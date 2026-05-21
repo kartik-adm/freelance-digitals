@@ -1,7 +1,24 @@
-# PHP
-FROM php:8.2-cli
+FROM composer:2 AS composer
+WORKDIR /var/www
 
-# Install system packages
+# Copy only composer files to leverage Docker cache
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --classmap-authoritative
+
+FROM node:20-bullseye AS node
+WORKDIR /var/www
+
+# Copy only package files to leverage Docker cache
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy project and build assets
+COPY . .
+RUN npm run build
+
+FROM php:8.2-fpm
+
+# System deps and PHP extensions required by this project
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -9,37 +26,23 @@ RUN apt-get update && apt-get install -y \
     unzip \
     libicu-dev \
     libzip-dev \
-    gnupg
+    zlib1g-dev \
+    libonig-dev \
+    libxml2-dev \
+    gnupg \
+  && docker-php-ext-install pdo pdo_mysql mbstring zip bcmath intl xml \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 20
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs
+# Copy built vendor and frontend assets from previous stages
+COPY --from=composer /var/www/vendor /var/www/vendor
+COPY --from=composer /var/www/composer.lock /var/www/composer.lock
+COPY --from=node /var/www/public/build /var/www/public/build
 
-# Install PHP extensions
-RUN docker-php-ext-install intl pdo pdo_mysql zip
-
-# Install Composer
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
-
-WORKDIR /app
-
-# Copy project
+WORKDIR /var/www
 COPY . .
 
-# Install PHP packages
-RUN composer install --no-dev --optimize-autoloader
+# Ensure storage and cache are writable by PHP-FPM
+RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache || true
 
-# Install frontend packages
-RUN npm install
-
-# Build Vite
-RUN npm run build
-
-# Cache Laravel
-RUN php artisan config:cache || true
-RUN php artisan route:cache || true
-RUN php artisan view:cache || true
-
-EXPOSE 10000
-
-CMD php artisan serve --host=0.0.0.0 --port=10000
+EXPOSE 9000
+CMD ["php-fpm"]
